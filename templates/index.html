@@ -1,0 +1,645 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Alcohol Label Compliance Checker</title>
+<style>
+:root {
+  --blue:#1F3864;--blue-m:#2F5496;--blue-l:#D6E4F7;
+  --green:#375623;--green-l:#C6EFCE;
+  --red:#9C0006;--red-l:#FFCCCC;
+  --amber:#7d5a00;--amber-l:#FFF2CC;
+  --gray:#595959;--gray-l:#F4F4F4;
+  --border:#D0D7E3;--radius:8px;
+}
+*{box-sizing:border-box;margin:0;padding:0;}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#EFF3FA;color:#1a1a2e;}
+
+header{background:var(--blue);color:#fff;padding:14px 28px;display:flex;align-items:center;gap:12px;}
+header h1{font-size:17px;font-weight:600;}
+.mode-tag{font-size:11px;background:rgba(255,255,255,.15);padding:3px 10px;border-radius:20px;margin-left:auto;}
+
+main{max-width:1200px;margin:0 auto;padding:24px 18px;display:grid;gap:18px;}
+
+/* Steps */
+.steps{display:flex;gap:2px;}
+.step{flex:1;padding:10px 14px;font-size:13px;font-weight:600;background:#fff;border:1px solid var(--border);
+      display:flex;align-items:center;gap:8px;color:var(--gray);cursor:pointer;transition:.15s;}
+.step:first-child{border-radius:var(--radius) 0 0 var(--radius);}
+.step:last-child{border-radius:0 var(--radius) var(--radius) 0;}
+.step.active{background:var(--blue);color:#fff;border-color:var(--blue);}
+.step.done{background:var(--green-l);color:var(--green);border-color:#a8d5a2;}
+.step-num{width:22px;height:22px;border-radius:50%;background:rgba(0,0,0,.08);display:flex;align-items:center;justify-content:center;font-size:11px;flex-shrink:0;}
+.step.active .step-num{background:rgba(255,255,255,.25);}
+.step.done .step-num{background:var(--green);color:#fff;}
+
+.card{background:#fff;border:1px solid var(--border);border-radius:var(--radius);padding:20px;}
+.card h2{font-size:14px;font-weight:700;color:var(--blue);margin-bottom:3px;}
+.card .sub{font-size:12px;color:var(--gray);margin-bottom:14px;}
+.panel{display:none;}.panel.active{display:block;}
+
+/* Upload grid */
+.upload-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;}
+.upload-col label{display:block;font-size:12px;font-weight:700;color:var(--blue-m);margin-bottom:6px;}
+.drop-zone{border:2px dashed var(--border);border-radius:var(--radius);padding:26px 14px;
+           text-align:center;cursor:pointer;transition:.2s;}
+.drop-zone:hover,.drop-zone.drag-over{border-color:var(--blue-m);background:var(--blue-l);}
+.drop-zone svg{width:30px;height:30px;stroke:var(--blue-m);margin-bottom:8px;}
+.drop-zone p{font-size:12px;color:var(--gray);}
+.drop-zone strong{color:var(--blue-m);}
+.drop-zone input{display:none;}
+.file-count{margin-top:6px;font-size:12px;font-weight:600;color:var(--blue-m);}
+
+/* Buttons */
+.btn{display:inline-flex;align-items:center;gap:6px;padding:8px 18px;border:none;border-radius:var(--radius);
+     font-size:13px;font-weight:600;cursor:pointer;transition:.15s;white-space:nowrap;}
+.btn:disabled{opacity:.4;cursor:not-allowed;}
+.btn-primary{background:var(--blue);color:#fff;}
+.btn-primary:hover:not(:disabled){background:var(--blue-m);}
+.btn-success{background:var(--green);color:#fff;}
+.btn-success:hover:not(:disabled){background:#4a7a30;}
+.btn-danger{background:var(--red);color:#fff;}
+.btn-outline{background:#fff;color:var(--blue);border:1.5px solid var(--blue);}
+.btn-outline:hover:not(:disabled){background:var(--blue-l);}
+.btn-sm{padding:5px 11px;font-size:12px;}
+
+/* Table */
+.tbl-wrap{overflow-x:auto;margin-top:10px;}
+table{width:100%;border-collapse:collapse;font-size:13px;}
+th{background:var(--blue);color:#fff;padding:8px 10px;text-align:left;white-space:nowrap;font-size:12px;}
+td{padding:7px 10px;border-bottom:1px solid var(--border);vertical-align:middle;}
+tr:last-child td{border-bottom:none;}
+tr:hover td{background:var(--blue-l);}
+.ref-code{font-family:monospace;font-size:11px;background:var(--gray-l);padding:2px 7px;border-radius:4px;}
+
+/* Badges */
+.badge{display:inline-block;padding:2px 9px;border-radius:20px;font-size:11px;font-weight:700;text-transform:uppercase;}
+.badge-ready{background:var(--blue-l);color:var(--blue-m);}
+.badge-processing{background:var(--amber-l);color:var(--amber);}
+.badge-processed{background:var(--green-l);color:var(--green);}
+.badge-match{background:var(--green-l);color:var(--green);}
+.badge-mismatch{background:var(--red-l);color:var(--red);}
+.badge-error{background:#e0e0e0;color:var(--gray);}
+
+/* Field dots */
+.fd{display:inline-block;width:9px;height:9px;border-radius:50%;margin:0 1px;}
+.fd-match{background:#4CAF50;}.fd-mismatch{background:#E53935;}
+.fd-missing{background:#FFC107;}.fd-error{background:#9E9E9E;}
+
+/* Progress */
+.progress-bg{height:8px;background:var(--gray-l);border-radius:99px;overflow:hidden;margin:10px 0;}
+.progress-fill{height:100%;background:var(--blue-m);border-radius:99px;transition:width .4s;width:0%;}
+.stats-row{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-top:12px;}
+.stat{background:var(--gray-l);border-radius:var(--radius);padding:10px;text-align:center;}
+.stat-val{font-size:20px;font-weight:700;}
+.stat-lbl{font-size:11px;color:var(--gray);}
+.stat.match .stat-val{color:var(--green);}
+.stat.mismatch .stat-val{color:var(--red);}
+.stat.error .stat-val{color:#b5510d;}
+
+/* Alerts */
+.alert{padding:10px 14px;border-radius:var(--radius);font-size:13px;margin-top:10px;}
+.alert-error{background:var(--red-l);color:var(--red);border:1px solid #f5c2c2;}
+.alert-info{background:var(--blue-l);color:var(--blue);}
+.alert-success{background:var(--green-l);color:var(--green);}
+.alert-warn{background:var(--amber-l);color:var(--amber);}
+
+/* Viewer modal */
+.modal-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:1000;align-items:center;justify-content:center;}
+.modal-overlay.open{display:flex;}
+.modal{background:#fff;border-radius:12px;max-width:96vw;max-height:92vh;overflow:hidden;display:flex;flex-direction:column;width:1100px;}
+.modal-header{background:var(--blue);color:#fff;padding:14px 20px;display:flex;align-items:center;justify-content:space-between;}
+.modal-header h3{font-size:14px;}
+.modal-body{flex:1;overflow:auto;padding:16px;}
+.viewer-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;height:100%;}
+.viewer-pane{border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;display:flex;flex-direction:column;}
+.viewer-pane-hdr{background:var(--blue-l);color:var(--blue);font-size:12px;font-weight:700;padding:8px 12px;border-bottom:1px solid var(--border);}
+.viewer-pane img{width:100%;object-fit:contain;max-height:65vh;}
+.viewer-result{background:var(--gray-l);padding:10px 12px;font-size:12px;}
+.close-btn{background:none;border:none;color:#fff;font-size:22px;cursor:pointer;padding:0 4px;line-height:1;}
+
+/* Submit section */
+.submit-section{border:2px solid var(--green);border-radius:var(--radius);padding:18px;background:var(--green-l);margin-top:16px;}
+.submit-section h3{color:var(--green);font-size:14px;margin-bottom:6px;}
+</style>
+</head>
+<body>
+
+<header>
+  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+    <path d="M9 3H5a2 2 0 0 0-2 2v4m6-6h10a2 2 0 0 1 2 2v4M9 3v18m0 0h10a2 2 0 0 0 2-2V9M9 21H5a2 2 0 0 1-2-2V9m0 0h18"/>
+  </svg>
+  <h1>Alcohol Label Compliance Checker · TTB</h1>
+  <span class="mode-tag" id="modeTag">local mode</span>
+</header>
+
+<main>
+  <!-- Steps -->
+  <div class="steps">
+    <div class="step active" id="tab1" onclick="showPanel(1)"><div class="step-num">1</div>Upload Pairs</div>
+    <div class="step" id="tab2" onclick="showPanel(2)"><div class="step-num">2</div>Review Queue</div>
+    <div class="step" id="tab3" onclick="showPanel(3)"><div class="step-num">3</div>Run Compliance Check</div>
+    <div class="step" id="tab4" onclick="showPanel(4)"><div class="step-num">4</div>Submit &amp; Report</div>
+  </div>
+
+  <!-- ── PANEL 1: Upload ──────────────────────────────────────────────────── -->
+  <div class="panel active card" id="panel1">
+    <h2>Step 1 — Upload Applications &amp; Labels</h2>
+    <p class="sub">Upload one or many pairs at once. Select all application files in the left zone, then all matching label files in the right zone — paired by position (first app ↔ first label, etc.). Each pair receives a unique Reference Number.</p>
+
+    <div class="upload-grid">
+      <div class="upload-col">
+        <label>📋 Application Forms (select 1 to 300)</label>
+        <div class="drop-zone" id="appZone">
+          <svg viewBox="0 0 24 24" fill="none" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z"/></svg>
+          <p>Drop application images here<br><strong>or click to browse — select multiple</strong></p>
+          <input type="file" id="appInput" multiple accept="image/*,.pdf">
+          <div class="file-count" id="appCount"></div>
+        </div>
+      </div>
+      <div class="upload-col">
+        <label>🏷️ Bottle Labels (same count, same order)</label>
+        <div class="drop-zone" id="labelZone">
+          <svg viewBox="0 0 24 24" fill="none" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M9.568 3H5.25A2.25 2.25 0 0 0 3 5.25v4.318c0 .597.237 1.17.659 1.591l9.581 9.581c.699.699 1.78.872 2.607.33a18.095 18.095 0 0 0 5.223-5.223c.542-.827.369-1.908-.33-2.607L9.568 3Z"/><path stroke-linecap="round" stroke-linejoin="round" d="M6 6h.008v.008H6V6Z"/></svg>
+          <p>Drop label images here<br><strong>or click to browse — select multiple</strong></p>
+          <input type="file" id="labelInput" multiple accept="image/*,.pdf">
+          <div class="file-count" id="labelCount"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Pairing preview table — shown once both sides have files -->
+    <div id="pairingPreview" style="display:none;margin-top:16px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+        <strong style="font-size:13px;color:var(--blue);">Batch pairing preview</strong>
+        <span style="font-size:12px;color:var(--gray);" id="pairInfo"></span>
+      </div>
+      <div class="tbl-wrap" style="max-height:220px;overflow-y:auto;">
+        <table>
+          <thead><tr><th>#</th><th>📋 Application File</th><th>🏷️ Label File</th><th>Status</th></tr></thead>
+          <tbody id="pairingBody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div style="margin-top:12px;display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
+      <button class="btn btn-primary" id="uploadBtn" disabled onclick="uploadPairs()">
+        Register All Pairs
+      </button>
+      <button class="btn btn-outline btn-sm" id="clearBtn" style="display:none;" onclick="clearFiles()">✕ Clear</button>
+    </div>
+    <div id="uploadAlert"></div>
+  </div>
+
+  <!-- ── PANEL 2: Queue ────────────────────────────────────────────────────── -->
+  <div class="panel card" id="panel2">
+    <h2>Step 2 — Review Queue</h2>
+    <p class="sub">All registered pairs are listed below. Click 👁 to view images side-by-side. Only pairs with status "Ready" will be processed.</p>
+    <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;">
+      <button class="btn btn-outline btn-sm" onclick="loadQueue()">↻ Refresh</button>
+      <button class="btn btn-primary" onclick="showPanel(3)" id="goRunBtn" disabled>Next: Run Compliance Check →</button>
+      <span style="font-size:12px;color:var(--gray);align-self:center;" id="queueCount"></span>
+    </div>
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr><th>Reference #</th><th>Application</th><th>Label</th><th>Uploaded</th><th>Status</th><th>View</th></tr></thead>
+        <tbody id="queueBody"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- ── PANEL 3: Run ──────────────────────────────────────────────────────── -->
+  <div class="panel card" id="panel3">
+    <h2>Step 3 — Run Compliance Check</h2>
+    <p class="sub">All ready pairs will be checked for TTB mandatory field compliance. Fields are compared case-sensitively.</p>
+    <div id="runSummaryBox"></div>
+    <div style="display:flex;gap:10px;margin-top:12px;flex-wrap:wrap;">
+      <button class="btn btn-success" id="runBtn" onclick="runBatch()" disabled>▶ Run Compliance Check</button>
+      <button class="btn btn-outline" onclick="showPanel(2)">← Back</button>
+    </div>
+    <div id="progressWrap" style="display:none;margin-top:16px;">
+      <div class="progress-bg"><div class="progress-fill" id="pFill"></div></div>
+      <p style="font-size:11px;color:var(--gray);text-align:right;" id="pLabel"></p>
+      <div class="stats-row">
+        <div class="stat match"><div class="stat-val" id="sMatch">0</div><div class="stat-lbl">Matched</div></div>
+        <div class="stat mismatch"><div class="stat-val" id="sMismatch">0</div><div class="stat-lbl">Mismatched</div></div>
+        <div class="stat error"><div class="stat-val" id="sErrors">0</div><div class="stat-lbl">Errors</div></div>
+        <div class="stat"><div class="stat-val" id="sPct">—</div><div class="stat-lbl">Pass Rate</div></div>
+      </div>
+    </div>
+    <div id="resultsWrap" style="display:none;margin-top:20px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+        <strong style="font-size:13px;">Compliance Results</strong>
+        <div style="display:flex;gap:8px;">
+          <button class="btn btn-outline btn-sm" id="dlXlsx" style="display:none;" onclick="dlReport('xlsx')">⬇ Excel</button>
+          <button class="btn btn-outline btn-sm" id="dlPdf"  style="display:none;" onclick="dlReport('pdf')">⬇ PDF</button>
+        </div>
+      </div>
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr><th>Ref #</th><th>Status</th><th>Score</th><th>Brand</th><th>Class</th><th>Alcohol %</th><th>Net Vol</th><th>Producer</th><th>Country</th><th>Health Warn</th><th>Discrepancies</th><th>View</th></tr></thead>
+          <tbody id="resultsBody"></tbody>
+        </table>
+      </div>
+      <div id="submitSection" style="display:none;">
+        <div class="submit-section">
+          <h3>✅ Compliance Check Complete</h3>
+          <p style="font-size:13px;color:var(--green);margin-bottom:12px;">Review the results above, then officially submit to store records in Azure and download the final PDF compliance report.</p>
+          <button class="btn btn-success" id="submitBtn" onclick="showPanel(4)">
+            → Proceed to Official Submit
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── PANEL 4: Submit ───────────────────────────────────────────────────── -->
+  <div class="panel card" id="panel4">
+    <h2>Step 4 — Official Submission</h2>
+    <p class="sub">This action stores the compliance results to Azure and downloads the signed PDF report. This step is final and cannot be undone.</p>
+    <div id="submitSummary" style="margin-bottom:16px;"></div>
+    <div id="submitAlert"></div>
+    <div style="margin-top:14px;display:flex;gap:10px;flex-wrap:wrap;">
+      <button class="btn btn-success" id="officialSubmitBtn" onclick="officialSubmit()">
+        🖊 Submit &amp; Download PDF Report
+      </button>
+      <button class="btn btn-outline" onclick="showPanel(3)">← Back to Results</button>
+    </div>
+    <div id="submitResult" style="display:none;margin-top:16px;">
+      <div class="alert alert-success">
+        <strong>Submission complete.</strong><br>
+        <span id="submitDetails"></span>
+      </div>
+      <div style="margin-top:12px;display:flex;gap:10px;">
+        <button class="btn btn-primary" id="finalPdfBtn" onclick="dlReport('pdf')">⬇ Download PDF Report</button>
+        <button class="btn btn-outline btn-sm" onclick="startNew()">+ Start New Batch</button>
+      </div>
+    </div>
+  </div>
+</main>
+
+<!-- ── Image Viewer Modal ─────────────────────────────────────────────────── -->
+<div class="modal-overlay" id="viewerModal">
+  <div class="modal">
+    <div class="modal-header">
+      <h3 id="viewerTitle">Viewing Pair</h3>
+      <button class="close-btn" onclick="closeViewer()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="viewer-grid">
+        <div class="viewer-pane">
+          <div class="viewer-pane-hdr">📋 Application Form</div>
+          <img id="viewerApp" src="" alt="Application form">
+          <div class="viewer-result" id="viewerAppName" style="color:var(--gray);"></div>
+        </div>
+        <div class="viewer-pane">
+          <div class="viewer-pane-hdr">🏷️ Bottle Label</div>
+          <img id="viewerLabel" src="" alt="Bottle label">
+          <div class="viewer-result" id="viewerLabelName" style="color:var(--gray);"></div>
+        </div>
+      </div>
+      <div id="viewerResult" style="margin-top:12px;"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+const FIELDS = ["brand_name","class_type","alcohol_content","net_contents","producer_address","country_of_origin","health_warning"];
+let appFiles=[], labelFiles=[], currentBatchId=null, pollTimer=null;
+
+// ── Panel nav ────────────────────────────────────────────────────────────────
+function showPanel(n) {
+  [1,2,3,4].forEach(i => {
+    document.getElementById(`panel${i}`).classList.toggle("active", i===n);
+    document.getElementById(`tab${i}`).classList.toggle("active", i===n);
+  });
+  if (n===2) loadQueue();
+  if (n===3) refreshRunSummary();
+  if (n===4) buildSubmitSummary();
+}
+
+// ── Drop zones ───────────────────────────────────────────────────────────────
+function setupZone(zoneId, inputId, arr, countId) {
+  const zone=document.getElementById(zoneId), inp=document.getElementById(inputId);
+  zone.addEventListener("click", ()=>inp.click());
+  zone.addEventListener("dragover", e=>{e.preventDefault();zone.classList.add("drag-over");});
+  zone.addEventListener("dragleave", ()=>zone.classList.remove("drag-over"));
+  zone.addEventListener("drop", e=>{
+    e.preventDefault(); zone.classList.remove("drag-over");
+    arr.length=0;
+    // Sort dropped files alphabetically so pairing is predictable
+    [...e.dataTransfer.files].sort((a,b)=>a.name.localeCompare(b.name)).forEach(f=>arr.push(f));
+    updateCount(countId,arr.length); syncUpload();
+  });
+  inp.addEventListener("change", ()=>{
+    arr.length=0;
+    [...inp.files].sort((a,b)=>a.name.localeCompare(b.name)).forEach(f=>arr.push(f));
+    updateCount(countId,arr.length); syncUpload();
+  });
+}
+function updateCount(id,n){document.getElementById(id).textContent=n?`${n} file(s) selected`:"";}
+
+function syncUpload(){
+  const n=appFiles.length, m=labelFiles.length;
+  const btn=document.getElementById("uploadBtn");
+  const clearBtn=document.getElementById("clearBtn");
+  const preview=document.getElementById("pairingPreview");
+  const info=document.getElementById("pairInfo");
+
+  const hasBoth = n>0 && m>0;
+  const matched = n===m;
+
+  btn.disabled = !(hasBoth && matched);
+  clearBtn.style.display = (n>0||m>0) ? "inline-flex" : "none";
+
+  if(hasBoth){
+    preview.style.display="block";
+    renderPairingTable();
+    if(!matched){
+      info.textContent=`⚠ ${n} apps vs ${m} labels — counts must match`;
+      info.style.color="var(--red)";
+    } else {
+      info.textContent=`${n} pair${n>1?"s":""} ready to register`;
+      info.style.color="var(--green)";
+    }
+  } else {
+    preview.style.display="none";
+    info.textContent="";
+  }
+}
+
+function renderPairingTable(){
+  const n=Math.max(appFiles.length, labelFiles.length);
+  const tbody=document.getElementById("pairingBody");
+  tbody.innerHTML=Array.from({length:n},(_,i)=>{
+    const af=appFiles[i], lf=labelFiles[i];
+    const ok=af&&lf;
+    const badge=ok
+      ? `<span class="badge badge-ready">✓ Paired</span>`
+      : `<span class="badge" style="background:var(--red-l);color:var(--red);">✗ Missing</span>`;
+    return `<tr>
+      <td style="font-size:12px;color:var(--gray);">${i+1}</td>
+      <td style="font-size:12px;">${af?af.name:'<span style="color:var(--red);">— none —</span>'}</td>
+      <td style="font-size:12px;">${lf?lf.name:'<span style="color:var(--red);">— none —</span>'}</td>
+      <td>${badge}</td>
+    </tr>`;
+  }).join("");
+}
+
+function clearFiles(){
+  appFiles=[]; labelFiles=[];
+  document.getElementById("appInput").value="";
+  document.getElementById("labelInput").value="";
+  updateCount("appCount",0); updateCount("labelCount",0);
+  syncUpload();
+}
+
+// ── Upload pairs (batch) ──────────────────────────────────────────────────────
+async function uploadPairs() {
+  setAlert("uploadAlert","");
+  const btn=document.getElementById("uploadBtn");
+  btn.disabled=true; btn.textContent=`Registering ${appFiles.length} pair${appFiles.length>1?"s":""}…`;
+  const fd=new FormData();
+  // Files already sorted alphabetically in setupZone — paired by position
+  appFiles.forEach(f=>fd.append("applications[]",f));
+  labelFiles.forEach(f=>fd.append("labels[]",f));
+  try {
+    const res=await fetch("/api/applications/upload-batch",{method:"POST",body:fd});
+    const d=await res.json();
+    if(!res.ok) throw new Error(d.error||"Upload failed");
+    const refs=d.created.map(c=>c.ref).join(", ");
+    setAlert("uploadAlert",
+      `✓ ${d.count} pair${d.count>1?"s":""} registered — Reference numbers: ${refs}`,
+      "success");
+    appFiles=[]; labelFiles=[];
+    document.getElementById("appInput").value="";
+    document.getElementById("labelInput").value="";
+    syncUpload(); updateCount("appCount",0); updateCount("labelCount",0);
+    document.getElementById("tab2").classList.add("done");
+    // Auto-refresh queue
+    setTimeout(loadQueue, 400);
+  } catch(e){setAlert("uploadAlert",e.message,"error");}
+  finally{btn.disabled=false;btn.textContent="Register All Pairs";}
+}
+
+// ── Queue ────────────────────────────────────────────────────────────────────
+async function loadQueue() {
+  const res=await fetch("/api/applications"); const d=await res.json();
+  const tbody=document.getElementById("queueBody");
+  const apps=d.applications||[];
+  if(!apps.length){tbody.innerHTML=`<tr><td colspan="6" style="text-align:center;color:var(--gray);padding:30px;">No pairs registered yet. Go to Step 1.</td></tr>`;document.getElementById("queueCount").textContent="";return;}
+  tbody.innerHTML=apps.map(a=>`<tr>
+    <td><span class="ref-code">${a.ref}</span></td>
+    <td style="font-size:12px;">${a.app_filename}</td>
+    <td style="font-size:12px;">${a.label_filename}</td>
+    <td style="font-size:11px;color:var(--gray);">${a.uploaded_at.replace("T"," ").substring(0,16)}</td>
+    <td>${statusBadge(a.status,a.result)}</td>
+    <td><button class="btn btn-outline btn-sm" onclick="viewPair('${a.ref}')">👁 View</button></td>
+  </tr>`).join("");
+  const ready=d.summary.ready;
+  document.getElementById("queueCount").textContent=`${ready} ready · ${d.summary.processed} processed`;
+  document.getElementById("goRunBtn").disabled=ready===0;
+}
+
+// ── Image viewer ─────────────────────────────────────────────────────────────
+async function viewPair(ref) {
+  try {
+    const res=await fetch(`/api/applications/${ref}/images`); const d=await res.json();
+    if(!res.ok) throw new Error(d.error);
+    document.getElementById("viewerTitle").textContent=`Pair ${ref}`;
+    document.getElementById("viewerApp").src=d.app_data_url;
+    document.getElementById("viewerLabel").src=d.label_data_url;
+    document.getElementById("viewerAppName").textContent=`📋 ${d.app_filename}`;
+    document.getElementById("viewerLabelName").textContent=`🏷️ ${d.label_filename}`;
+    // Show result if processed
+    const qRes=await fetch(`/api/applications/${ref}`); const qd=await qRes.json();
+    const vr=document.getElementById("viewerResult");
+    if(qd.result){
+      const r=qd.result;
+      const col=r.overall_status==="match"?"var(--green)":"var(--red)";
+      const ico=r.overall_status==="match"?"✓ MATCH":"✗ MISMATCH";
+      let disc=r.discrepancies||[];
+      if(typeof disc==="string"){try{disc=JSON.parse(disc);}catch{disc=[disc];}}
+      vr.innerHTML=`<div style="background:${r.overall_status==="match"?"var(--green-l)":"var(--red-l)"};border-radius:6px;padding:10px;">
+        <strong style="color:${col}">${ico}</strong> &nbsp; Score: ${Math.round((r.confidence_score||0)*100)}%
+        ${disc.length?`<ul style="margin-top:8px;padding-left:16px;font-size:12px;color:var(--red);">${disc.map(d=>`<li>${d}</li>`).join("")}</ul>`:""}
+      </div>`;
+    } else {vr.innerHTML="";}
+    document.getElementById("viewerModal").classList.add("open");
+  } catch(e){alert("Could not load images: "+e.message);}
+}
+function closeViewer(){document.getElementById("viewerModal").classList.remove("open");}
+document.getElementById("viewerModal").addEventListener("click",e=>{if(e.target===e.currentTarget)closeViewer();});
+
+// ── Run batch ─────────────────────────────────────────────────────────────────
+async function refreshRunSummary() {
+  const res=await fetch("/api/applications"); const d=await res.json();
+  const ready=d.summary.ready;
+  const box=document.getElementById("runSummaryBox");
+  const btn=document.getElementById("runBtn");
+  if(ready===0){
+    box.innerHTML=`<div class="alert alert-warn">No pairs are ready. Go back to Step 2.</div>`;
+    btn.disabled=true;
+  } else {
+    box.innerHTML=`<div class="alert alert-success">✓ <strong>${ready}</strong> pair(s) ready for compliance check.</div>`;
+    btn.disabled=false;
+  }
+}
+
+async function runBatch() {
+  document.getElementById("runBtn").disabled=true;
+  document.getElementById("runBtn").textContent="Running…";
+  document.getElementById("progressWrap").style.display="block";
+  document.getElementById("resultsWrap").style.display="none";
+  document.getElementById("submitSection").style.display="none";
+  try {
+    const res=await fetch("/api/batch/run",{method:"POST",headers:{"Content-Type":"application/json"},body:"{}"});
+    const d=await res.json();
+    if(!res.ok) throw new Error(d.error);
+    currentBatchId=d.batch_id;
+    startPolling(currentBatchId);
+  } catch(e){
+    document.getElementById("progressWrap").style.display="none";
+    document.getElementById("runSummaryBox").innerHTML=`<div class="alert alert-error">${e.message}</div>`;
+    document.getElementById("runBtn").disabled=false;
+    document.getElementById("runBtn").textContent="▶ Run Compliance Check";
+  }
+}
+
+function startPolling(batchId) {
+  if(pollTimer) clearInterval(pollTimer);
+  pollTimer=setInterval(async()=>{
+    const res=await fetch(`/api/batch/${batchId}/progress`); const d=await res.json();
+    document.getElementById("pFill").style.width=d.percent+"%";
+    document.getElementById("pLabel").textContent=`${d.processed} / ${d.total} processed`;
+    document.getElementById("sMatch").textContent=d.matched;
+    document.getElementById("sMismatch").textContent=d.mismatched;
+    document.getElementById("sErrors").textContent=d.errors;
+    document.getElementById("sPct").textContent=d.total?Math.round(d.matched/d.total*100)+"%":"—";
+    if(d.status==="complete"){
+      clearInterval(pollTimer);
+      document.getElementById("runBtn").textContent="▶ Run Compliance Check";
+      document.getElementById("runBtn").disabled=false;
+      document.getElementById("dlXlsx").style.display="inline-flex";
+      document.getElementById("dlPdf").style.display="inline-flex";
+      loadResults(batchId);
+      document.getElementById("tab3").classList.add("done");
+    } else if(d.status==="error"){
+      clearInterval(pollTimer);
+      document.getElementById("runBtn").disabled=false;
+      document.getElementById("runBtn").textContent="▶ Run Compliance Check";
+    }
+  },1200);
+}
+
+async function loadResults(batchId) {
+  const res=await fetch(`/api/batch/${batchId}/results`); const d=await res.json();
+  if(!d.results?.length) return;
+  document.getElementById("resultsWrap").style.display="block";
+  document.getElementById("submitSection").style.display="block";
+  const tbody=document.getElementById("resultsBody");
+  tbody.innerHTML=d.results.map(r=>{
+    const fields=r.fields||{};
+    let disc=r.discrepancies||[];
+    if(typeof disc==="string"){try{disc=JSON.parse(disc);}catch{disc=[disc];}}
+    const badge=r.overall_status==="match"
+      ?`<span class="badge badge-match">✓ Match</span>`
+      :r.overall_status==="mismatch"
+      ?`<span class="badge badge-mismatch">✗ Mismatch</span>`
+      :`<span class="badge badge-error">Error</span>`;
+    return `<tr>
+      <td><span class="ref-code">${r.ref||"—"}</span></td>
+      <td>${badge}</td>
+      <td style="font-size:12px;">${Math.round((r.confidence_score||0)*100)}%</td>
+      ${FIELDS.map(k=>`<td><span class="fd ${dotCls(fields[k])}" title="${k}: ${fields[k]||'?'}"></span></td>`).join("")}
+      <td style="max-width:180px;font-size:11px;color:var(--red);">${disc.join("; ")||"—"}</td>
+      <td><button class="btn btn-outline btn-sm" onclick="viewPair('${r.ref}')">👁</button></td>
+    </tr>`;
+  }).join("");
+  document.getElementById("resultsWrap").scrollIntoView({behavior:"smooth"});
+}
+
+// ── Submit panel ──────────────────────────────────────────────────────────────
+function buildSubmitSummary() {
+  if(!currentBatchId){
+    document.getElementById("submitSummary").innerHTML=`<div class="alert alert-warn">No completed batch. Run the compliance check first.</div>`;
+    document.getElementById("officialSubmitBtn").disabled=true;
+    return;
+  }
+  fetch(`/api/batch/${currentBatchId}/progress`).then(r=>r.json()).then(d=>{
+    document.getElementById("submitSummary").innerHTML=`
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:12px;">
+        <div class="stat"><div class="stat-val">${d.total}</div><div class="stat-lbl">Total Pairs</div></div>
+        <div class="stat match"><div class="stat-val">${d.matched}</div><div class="stat-lbl">Matched</div></div>
+        <div class="stat mismatch"><div class="stat-val">${d.mismatched}</div><div class="stat-lbl">Mismatched</div></div>
+        <div class="stat"><div class="stat-val">${d.total?Math.round(d.matched/d.total*100):0}%</div><div class="stat-lbl">Pass Rate</div></div>
+      </div>`;
+    document.getElementById("officialSubmitBtn").disabled = d.status!=="complete";
+  });
+}
+
+async function officialSubmit() {
+  const btn=document.getElementById("officialSubmitBtn");
+  btn.disabled=true; btn.textContent="Submitting…";
+  try {
+    const res=await fetch(`/api/batch/${currentBatchId}/submit`,{method:"POST"});
+    const d=await res.json();
+    if(!res.ok && res.status!==409) throw new Error(d.error);
+    const warnings=d.warnings?.filter(w=>!w.includes("not configured"))||[];
+    document.getElementById("submitResult").style.display="block";
+    document.getElementById("submitDetails").innerHTML=
+      `Submitted at ${new Date(d.submitted_at).toLocaleString()}.`+
+      (d.azure_stored?" Azure Blob: ✓":"")+(d.db_saved?" Azure SQL: ✓":"")+
+      (warnings.length?`<br><em style="font-size:11px;">${warnings.join("; ")}</em>`:"");
+    document.getElementById("tab4").classList.add("done");
+    btn.textContent="✓ Submitted";
+    // Auto-download PDF
+    setTimeout(()=>dlReport("pdf"), 600);
+  } catch(e){
+    setAlert("submitAlert",e.message,"error");
+    btn.disabled=false; btn.textContent="🖊 Submit & Download PDF Report";
+  }
+}
+
+function dlReport(fmt) {
+  if(currentBatchId) window.location.href=`/api/batch/${currentBatchId}/report/${fmt}`;
+}
+
+function startNew() {
+  currentBatchId=null; pollTimer=null;
+  showPanel(1);
+  [1,2,3,4].forEach(i=>document.getElementById(`tab${i}`).classList.remove("done"));
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+function statusBadge(s,result){
+  if(s==="processed"&&result){
+    const ov=result.overall_status;
+    return ov==="match"?`<span class="badge badge-match">✓ Match</span>`
+          :ov==="mismatch"?`<span class="badge badge-mismatch">✗ Mismatch</span>`
+          :`<span class="badge badge-error">Error</span>`;
+  }
+  const map={ready:"badge-ready",processing:"badge-processing",processed:"badge-processed"};
+  const lbl={ready:"Ready",processing:"Processing…",processed:"Processed"};
+  return `<span class="badge ${map[s]||"badge-error"}">${lbl[s]||s}</span>`;
+}
+function dotCls(s){
+  if(!s||s==="error") return "fd-error";
+  if(s==="match") return "fd-match";
+  if(s==="mismatch") return "fd-mismatch";
+  return "fd-missing";
+}
+function setAlert(id,msg,type="info"){
+  document.getElementById(id).innerHTML=msg?`<div class="alert alert-${type}">${msg}</div>`:"";
+}
+
+setupZone("appZone","appInput",appFiles,"appCount");
+setupZone("labelZone","labelInput",labelFiles,"labelCount");
+
+fetch("/health").then(r=>r.json()).then(d=>{
+  document.getElementById("modeTag").textContent=d.mode+" mode";
+});
+</script>
+</body>
+</html>
