@@ -223,9 +223,10 @@ def list_applications():
         ]
     apps.sort(key=lambda x: x["uploaded_at"], reverse=True)
     summary = {
-        "total":     len(apps),
-        "ready":     sum(1 for a in apps if a["status"] == "ready"),
-        "processed": sum(1 for a in apps if a["status"] == "processed"),
+        "total":      len(apps),
+        "ready":      sum(1 for a in apps if a["status"] == "ready"),
+        "processing": sum(1 for a in apps if a["status"] == "processing"),
+        "processed":  sum(1 for a in apps if a["status"] == "processed"),
     }
     return jsonify({"applications": apps, "summary": summary})
 
@@ -282,10 +283,7 @@ def run_batch():
         for i, r in enumerate(ready)
     ]
 
-    with _lock:
-        for r in ready:
-            _applications[r["ref"]]["status"] = "processing"
-
+    # Status stays "ready" until the background thread processes each pair
     with _batch_lock:
         _batches[batch_id] = {
             "total": len(pairs), "processed": 0,

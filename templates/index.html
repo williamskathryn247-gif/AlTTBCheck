@@ -476,10 +476,14 @@ document.getElementById("viewerModal").addEventListener("click",e=>{if(e.target=
 async function refreshRunSummary() {
   const res=await fetch("/api/applications"); const d=await res.json();
   const ready=d.summary.ready;
+  const processing=d.summary.processing||0;
   const box=document.getElementById("runSummaryBox");
   const btn=document.getElementById("runBtn");
-  if(ready===0){
-    box.innerHTML=`<div class="alert alert-warn">No pairs are ready. Go back to Step 2.</div>`;
+  if(ready===0 && processing===0){
+    box.innerHTML=`<div class="alert alert-warn">No pairs are ready. Go back to Step 2 to upload pairs first.</div>`;
+    btn.disabled=true;
+  } else if(processing>0) {
+    box.innerHTML=`<div class="alert alert-info">⏳ <strong>${processing}</strong> pair(s) currently processing…</div>`;
     btn.disabled=true;
   } else {
     box.innerHTML=`<div class="alert alert-success">✓ <strong>${ready}</strong> pair(s) ready for compliance check.</div>`;
