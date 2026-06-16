@@ -26,6 +26,14 @@ from matcher import process_batch, MANDATORY_FIELDS, FIELD_LABELS
 from report import generate_excel_report
 from pdf_report import generate_pdf_report
 
+# ── Render/Docker: explicitly set Tesseract path ──────────────────────────────
+import pytesseract
+# Try common Linux paths where Tesseract lives in Docker containers
+for _tess_path in ["/usr/bin/tesseract", "/usr/local/bin/tesseract"]:
+    if os.path.isfile(_tess_path):
+        pytesseract.pytesseract.tesseract_cmd = _tess_path
+        break
+
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s — %(message)s")
 logger = logging.getLogger(__name__)
 
@@ -331,7 +339,10 @@ def _run_batch(batch_id: str, pairs: List[Dict]):
             _batches[batch_id]["results"].append(result)
 
     try:
+        logger.info(f"Batch {batch_id} — starting OCR on {len(pairs)} pair(s)")
         results = process_batch(pairs, progress_callback=on_progress)
+        logger.info(f"Batch {batch_id} — OCR complete, generating reports")
+
         total    = len(pairs)
         summary  = {
             "total_pairs": total, "matched": matched,
@@ -339,8 +350,24 @@ def _run_batch(batch_id: str, pairs: List[Dict]):
             "pass_rate": round(matched / total * 100, 1) if total else 0,
             "completed_at": datetime.utcnow().isoformat(),
         }
-        xlsx_bytes = generate_excel_report(batch_id, results, summary)
-        pdf_bytes  = generate_pdf_report(batch_id, results, summary)
+
+        # Generate Excel report
+        try:
+            xlsx_bytes = generate_excel_report(batch_id, results, summary)
+            logger.info(f"Batch {batch_id} — Excel report generated ({len(xlsx_bytes)} bytes)")
+        except Exception as e:
+            logger.error(f"Batch {batch_id} — Excel report failed: {e}")
+            import traceback; logger.error(traceback.format_exc())
+            xlsx_bytes = None
+
+        # Generate PDF report
+        try:
+            pdf_bytes = generate_pdf_report(batch_id, results, summary)
+            logger.info(f"Batch {batch_id} — PDF report generated ({len(pdf_bytes)} bytes)")
+        except Exception as e:
+            logger.error(f"Batch {batch_id} — PDF report failed: {e}")
+            import traceback; logger.error(traceback.format_exc())
+            pdf_bytes = None
 
         with _batch_lock:
             _batches[batch_id]["status"]            = "complete"
@@ -348,13 +375,39 @@ def _run_batch(batch_id: str, pairs: List[Dict]):
             _batches[batch_id]["report_bytes_pdf"]  = pdf_bytes
             _batches[batch_id]["summary"]           = summary
 
-        logger.info(f"Batch {batch_id} complete — {matched} matched, {mismatched} mismatched")
+        logger.info(f"Batch {batch_id} complete — {matched} matched, {mismatched} mismatched, {errors} errors")
+
     except Exception as e:
-        logger.error(f"Batch {batch_id} failed: {e}")
+        import traceback
+        logger.error(f"Batch {batch_id} FAILED: {e}")
+        logger.error(traceback.format_exc())
         with _batch_lock:
             _batches[batch_id]["status"] = "error"
+            _batches[batch_id]["error_message"] = str(e)
 
 # ── Batch status & results ─────────────────────────────────────────────────────
+
+@app.route("/api/batch/<batch_id>/debug")
+def batch_debug(batch_id: str):
+    """Full batch state for debugging — shows error messages and result count."""
+    with _batch_lock:
+        b = _batches.get(batch_id)
+    if not b:
+        return jsonify({"error": "Batch not found"}), 404
+    return jsonify({
+        "batch_id":    batch_id,
+        "status":      b["status"],
+        "total":       b["total"],
+        "processed":   b["processed"],
+        "matched":     b["matched"],
+        "mismatched":  b["mismatched"],
+        "errors":      b["errors"],
+        "result_count": len(b.get("results", [])),
+        "has_xlsx":    b.get("report_bytes_xlsx") is not None,
+        "has_pdf":     b.get("report_bytes_pdf") is not None,
+        "error_message": b.get("error_message"),
+        "started_at":  b.get("started_at"),
+    })
 
 @app.route("/api/batch/<batch_id>/progress")
 def batch_progress(batch_id: str):
