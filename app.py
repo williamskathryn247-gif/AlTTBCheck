@@ -261,10 +261,15 @@ def get_images(ref: str):
         "label_data_url": r["label_data_url"],
     })
 
-# ── Run batch ──────────────────────────────────────────────────────────────────
+# ── Run batch — synchronous per-pair processing, no background threads ──────────
 
 @app.route("/api/batch/run", methods=["POST"])
 def run_batch():
+    """
+    Creates a batch and returns batch_id + pending refs.
+    The browser then calls /api/batch/<id>/process-next once per pair.
+    This avoids background threads which are unreliable on Render free tier.
+    """
     body        = request.get_json(silent=True) or {}
     filter_refs = body.get("refs")
 
@@ -281,109 +286,159 @@ def run_batch():
         return jsonify({"error": f"Batch size {len(ready)} exceeds maximum {MAX_BATCH_SIZE}."}), 400
 
     batch_id = str(uuid.uuid4())
-    pairs = [
-        {
-            "pair_index":  i,
-            "ref":         r["ref"],
-            "app_bytes":   r["app_bytes"],
-            "label_bytes": r["label_bytes"],
-        }
-        for i, r in enumerate(ready)
-    ]
 
-    # Status stays "ready" until the background thread processes each pair
     with _batch_lock:
         _batches[batch_id] = {
-            "total": len(pairs), "processed": 0,
-            "matched": 0, "mismatched": 0, "errors": 0,
-            "status": "processing", "results": [],
-            "report_bytes_xlsx": None, "report_bytes_pdf": None,
-            "summary": None, "refs": [p["ref"] for p in pairs],
-            "started_at": datetime.utcnow().isoformat(),
-            "submitted": False,
+            "total":             len(ready),
+            "processed":         0,
+            "matched":           0,
+            "mismatched":        0,
+            "errors":            0,
+            "status":            "processing",
+            "results":           [],
+            "pending_refs":      [r["ref"] for r in ready],
+            "report_bytes_xlsx": None,
+            "report_bytes_pdf":  None,
+            "summary":           None,
+            "refs":              [r["ref"] for r in ready],
+            "started_at":        datetime.utcnow().isoformat(),
+            "submitted":         False,
         }
 
-    threading.Thread(target=_run_batch, args=(batch_id, pairs), daemon=True).start()
+    logger.info(f"Batch {batch_id} created — {len(ready)} pairs pending")
     return jsonify({
-        "batch_id": batch_id, "total_pairs": len(pairs),
-        "refs": [p["ref"] for p in pairs], "status": "processing",
-        "message": f"Running compliance check on {len(pairs)} pair(s).",
+        "batch_id":    batch_id,
+        "total_pairs": len(ready),
+        "refs":        [r["ref"] for r in ready],
+        "status":      "processing",
+        "message":     f"Batch created. {len(ready)} pair(s) queued.",
     }), 202
 
-def _run_batch(batch_id: str, pairs: List[Dict]):
-    matched = mismatched = errors = 0
-    results = []
 
-    def on_progress(pair_index: int, result: Dict):
-        nonlocal matched, mismatched, errors
-        overall = result.get("overall_status", "error")
-        if overall == "match":      matched   += 1
-        elif overall == "mismatch": mismatched += 1
-        else:                       errors    += 1
-        result["ref"] = pairs[pair_index]["ref"]
+@app.route("/api/batch/<batch_id>/process-next", methods=["POST"])
+def process_next(batch_id: str):
+    """Process one pair synchronously. Browser calls this once per pair."""
+    with _batch_lock:
+        b = _batches.get(batch_id)
+    if not b:
+        return jsonify({"error": "Batch not found"}), 404
+    if b["status"] == "complete":
+        return jsonify({"status": "complete"}), 200
 
-        with _lock:
-            if pairs[pair_index]["ref"] in _applications:
-                _applications[pairs[pair_index]["ref"]]["status"] = "processed"
-                _applications[pairs[pair_index]["ref"]]["result"] = {
-                    "overall_status":  overall,
-                    "confidence_score": result.get("confidence_score"),
-                    "discrepancies":   result.get("discrepancies", []),
-                }
+    with _batch_lock:
+        pending = _batches[batch_id]["pending_refs"]
+        if not pending:
+            return _finalise_batch(batch_id)
+        ref = pending[0]
+        pair_index = _batches[batch_id]["total"] - len(pending)
 
+    with _lock:
+        pair_record = _applications.get(ref)
+
+    if not pair_record:
         with _batch_lock:
-            _batches[batch_id]["processed"]  = pair_index + 1
-            _batches[batch_id]["matched"]    = matched
-            _batches[batch_id]["mismatched"] = mismatched
-            _batches[batch_id]["errors"]     = errors
-            _batches[batch_id]["results"].append(result)
+            _batches[batch_id]["pending_refs"].pop(0)
+            _batches[batch_id]["errors"] += 1
+            _batches[batch_id]["processed"] += 1
+        return jsonify({"status": "processing", "error": f"Pair {ref} not found"})
+
+    logger.info(f"Batch {batch_id} — processing {pair_index+1}/{b['total']}: {ref}")
 
     try:
-        logger.info(f"Batch {batch_id} — starting OCR on {len(pairs)} pair(s)")
-        results = process_batch(pairs, progress_callback=on_progress)
-        logger.info(f"Batch {batch_id} — OCR complete, generating reports")
-
-        total    = len(pairs)
-        summary  = {
-            "total_pairs": total, "matched": matched,
-            "mismatched": mismatched, "errors": errors,
-            "pass_rate": round(matched / total * 100, 1) if total else 0,
-            "completed_at": datetime.utcnow().isoformat(),
-        }
-
-        # Generate Excel report
-        try:
-            xlsx_bytes = generate_excel_report(batch_id, results, summary)
-            logger.info(f"Batch {batch_id} — Excel report generated ({len(xlsx_bytes)} bytes)")
-        except Exception as e:
-            logger.error(f"Batch {batch_id} — Excel report failed: {e}")
-            import traceback; logger.error(traceback.format_exc())
-            xlsx_bytes = None
-
-        # Generate PDF report
-        try:
-            pdf_bytes = generate_pdf_report(batch_id, results, summary)
-            logger.info(f"Batch {batch_id} — PDF report generated ({len(pdf_bytes)} bytes)")
-        except Exception as e:
-            logger.error(f"Batch {batch_id} — PDF report failed: {e}")
-            import traceback; logger.error(traceback.format_exc())
-            pdf_bytes = None
-
-        with _batch_lock:
-            _batches[batch_id]["status"]            = "complete"
-            _batches[batch_id]["report_bytes_xlsx"] = xlsx_bytes
-            _batches[batch_id]["report_bytes_pdf"]  = pdf_bytes
-            _batches[batch_id]["summary"]           = summary
-
-        logger.info(f"Batch {batch_id} complete — {matched} matched, {mismatched} mismatched, {errors} errors")
-
+        from matcher import compare_pair
+        result = compare_pair(pair_record["app_bytes"], pair_record["label_bytes"], pair_index)
+        result["ref"] = ref
+        overall = result.get("overall_status", "error")
     except Exception as e:
         import traceback
-        logger.error(f"Batch {batch_id} FAILED: {e}")
-        logger.error(traceback.format_exc())
-        with _batch_lock:
-            _batches[batch_id]["status"] = "error"
-            _batches[batch_id]["error_message"] = str(e)
+        logger.error(f"OCR error for {ref}: {e} — {traceback.format_exc()}")
+        result = {
+            "pair_index": pair_index, "ref": ref,
+            "overall_status": "error", "confidence_score": 0.0,
+            "fields": {k: "missing_both" for k in ["brand_name","class_type","alcohol_content","net_contents","producer_address","country_of_origin","health_warning"]},
+            "application_fields": {}, "label_fields": {},
+            "discrepancies": [f"OCR error: {str(e)}"],
+            "notes": "Processing error — manual review required."
+        }
+        overall = "error"
+
+    with _lock:
+        if ref in _applications:
+            _applications[ref]["status"] = "processed"
+            _applications[ref]["result"] = {
+                "overall_status":   overall,
+                "confidence_score": result.get("confidence_score"),
+                "discrepancies":    result.get("discrepancies", []),
+            }
+
+    with _batch_lock:
+        b = _batches[batch_id]
+        b["pending_refs"].pop(0)
+        b["processed"] += 1
+        b["results"].append(result)
+        if overall == "match":      b["matched"]    += 1
+        elif overall == "mismatch": b["mismatched"] += 1
+        else:                       b["errors"]     += 1
+        remaining = len(b["pending_refs"])
+
+    logger.info(f"Batch {batch_id} — {b['processed']}/{b['total']} done ({overall})")
+
+    if remaining == 0:
+        return _finalise_batch(batch_id)
+
+    return jsonify({
+        "status":    "processing",
+        "processed": b["processed"],
+        "total":     b["total"],
+        "percent":   int(b["processed"] / b["total"] * 100),
+        "matched":   b["matched"],
+        "mismatched":b["mismatched"],
+        "errors":    b["errors"],
+        "last_ref":  ref,
+        "last_result": overall,
+    })
+
+
+def _finalise_batch(batch_id: str):
+    with _batch_lock:
+        b        = _batches[batch_id]
+        results  = list(b["results"])
+        matched  = b["matched"]
+        mismatched = b["mismatched"]
+        errors   = b["errors"]
+        total    = b["total"]
+
+    summary = {
+        "total_pairs": total, "matched": matched,
+        "mismatched": mismatched, "errors": errors,
+        "pass_rate": round(matched / total * 100, 1) if total else 0,
+        "completed_at": datetime.utcnow().isoformat(),
+    }
+    xlsx_bytes = pdf_bytes = None
+    try:
+        xlsx_bytes = generate_excel_report(batch_id, results, summary)
+        logger.info(f"Batch {batch_id} — Excel: {len(xlsx_bytes)} bytes")
+    except Exception as e:
+        logger.error(f"Batch {batch_id} — Excel failed: {e}")
+    try:
+        pdf_bytes = generate_pdf_report(batch_id, results, summary)
+        logger.info(f"Batch {batch_id} — PDF: {len(pdf_bytes)} bytes")
+    except Exception as e:
+        logger.error(f"Batch {batch_id} — PDF failed: {e}")
+
+    with _batch_lock:
+        _batches[batch_id]["status"]            = "complete"
+        _batches[batch_id]["summary"]           = summary
+        _batches[batch_id]["report_bytes_xlsx"] = xlsx_bytes
+        _batches[batch_id]["report_bytes_pdf"]  = pdf_bytes
+
+    logger.info(f"Batch {batch_id} complete — {matched} matched, {mismatched} mismatched, {errors} errors")
+    return jsonify({
+        "status":    "complete",
+        "processed": total, "total": total, "percent": 100,
+        "matched": matched, "mismatched": mismatched, "errors": errors,
+        "summary": summary,
+    })
 
 # ── Batch status & results ─────────────────────────────────────────────────────
 

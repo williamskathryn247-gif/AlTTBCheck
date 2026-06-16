@@ -493,49 +493,82 @@ async function refreshRunSummary() {
 
 async function runBatch() {
   document.getElementById("runBtn").disabled=true;
-  document.getElementById("runBtn").textContent="Running…";
+  document.getElementById("runBtn").textContent="Starting…";
   document.getElementById("progressWrap").style.display="block";
   document.getElementById("resultsWrap").style.display="none";
   document.getElementById("submitSection").style.display="none";
+  setProgress(0, 0, 0, 0, 0);
+
   try {
+    // Step 1: create the batch — get batch_id and list of refs to process
     const res=await fetch("/api/batch/run",{method:"POST",headers:{"Content-Type":"application/json"},body:"{}"});
     const d=await res.json();
     if(!res.ok) throw new Error(d.error);
     currentBatchId=d.batch_id;
-    startPolling(currentBatchId);
+    document.getElementById("runBtn").textContent="Running…";
+
+    // Step 2: process each pair one at a time by calling process-next
+    await processAllPairs(currentBatchId, d.total_pairs);
+
   } catch(e){
     document.getElementById("progressWrap").style.display="none";
-    document.getElementById("runSummaryBox").innerHTML=`<div class="alert alert-error">${e.message}</div>`;
+    document.getElementById("runSummaryBox").innerHTML=`<div class="alert alert-error"><strong>Error:</strong> ${e.message}</div>`;
     document.getElementById("runBtn").disabled=false;
     document.getElementById("runBtn").textContent="▶ Run Compliance Check";
   }
 }
 
-function startPolling(batchId) {
-  if(pollTimer) clearInterval(pollTimer);
-  pollTimer=setInterval(async()=>{
-    const res=await fetch(`/api/batch/${batchId}/progress`); const d=await res.json();
-    document.getElementById("pFill").style.width=d.percent+"%";
-    document.getElementById("pLabel").textContent=`${d.processed} / ${d.total} processed`;
-    document.getElementById("sMatch").textContent=d.matched;
-    document.getElementById("sMismatch").textContent=d.mismatched;
-    document.getElementById("sErrors").textContent=d.errors;
-    document.getElementById("sPct").textContent=d.total?Math.round(d.matched/d.total*100)+"%":"—";
-    if(d.status==="complete"){
-      clearInterval(pollTimer);
-      document.getElementById("runBtn").textContent="▶ Run Compliance Check";
+async function processAllPairs(batchId, total) {
+  for(let i=0; i<total; i++){
+    try {
+      const res=await fetch(`/api/batch/${batchId}/process-next`,{method:"POST"});
+      const d=await res.json();
+
+      // Update progress bar after each pair
+      setProgress(d.processed||i+1, d.total||total, d.matched||0, d.mismatched||0, d.errors||0);
+
+      if(d.status==="complete"){
+        onBatchComplete(batchId);
+        return;
+      }
+      if(d.status==="error" && !d.last_result){
+        throw new Error(d.error_message || "Batch failed");
+      }
+    } catch(e) {
+      document.getElementById("runSummaryBox").innerHTML=
+        `<div class="alert alert-error"><strong>Error on pair ${i+1}:</strong> ${e.message}</div>`;
       document.getElementById("runBtn").disabled=false;
-      document.getElementById("dlXlsx").style.display="inline-flex";
-      document.getElementById("dlPdf").style.display="inline-flex";
-      loadResults(batchId);
-      document.getElementById("tab3").classList.add("done");
-    } else if(d.status==="error"){
-      clearInterval(pollTimer);
-      document.getElementById("runBtn").disabled=false;
       document.getElementById("runBtn").textContent="▶ Run Compliance Check";
+      return;
     }
-  },1200);
+  }
+  // Fallback — fetch final status
+  const res=await fetch(`/api/batch/${batchId}/progress`);
+  const d=await res.json();
+  if(d.status==="complete") onBatchComplete(batchId);
 }
+
+function setProgress(processed, total, matched, mismatched, errors){
+  const pct = total ? Math.round(processed/total*100) : 0;
+  document.getElementById("pFill").style.width=pct+"%";
+  document.getElementById("pLabel").textContent=total?`${processed} / ${total} processed`:"";
+  document.getElementById("sMatch").textContent=matched;
+  document.getElementById("sMismatch").textContent=mismatched;
+  document.getElementById("sErrors").textContent=errors;
+  document.getElementById("sPct").textContent=total?Math.round(matched/total*100)+"%":"—";
+}
+
+function onBatchComplete(batchId){
+  document.getElementById("runBtn").textContent="▶ Run Compliance Check";
+  document.getElementById("runBtn").disabled=false;
+  document.getElementById("dlXlsx").style.display="inline-flex";
+  document.getElementById("dlPdf").style.display="inline-flex";
+  loadResults(batchId);
+  document.getElementById("tab3").classList.add("done");
+}
+
+// Keep startPolling for progress endpoint compatibility
+function startPolling(batchId) { /* replaced by processAllPairs */ }
 
 async function loadResults(batchId) {
   const res=await fetch(`/api/batch/${batchId}/results`); const d=await res.json();
